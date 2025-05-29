@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy
+asyncpg
+python-multipart
+email-validator
+passlib[bcrypt]
+PyJWT
+pydantic
+fastapi-mail
+python-dotenv
+pydantic-settings
+APScheduler
