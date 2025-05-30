@@ -1,28 +1,44 @@
-import os
 import subprocess
 import logging
 from datetime import datetime
+import sys
 
-# run_script.py
+# Configure logging to show INFO and ERROR messages in terminal
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
 def run_script(file_path: str, *args):
+    logging.info("🟡 Starting script execution")
+    
     try:
-        logging.info(f"[{datetime.now()}] Running script at: {file_path} with args: {args}")
+        logging.info(f"📍 Step 1: Preparing to run script: {file_path}")
+        if args:
+            logging.info(f"📍 Step 2: With arguments: {args}")
 
-        command = ["python", file_path] + list(args)  # Convert tuple to list and add args
+        # Construct the command
+        command = ["python", file_path] + list(args)
+        logging.info(f"📍 Step 3: Executing command: {' '.join(command)}")
+
+        # Run the subprocess
         result = subprocess.run(command, capture_output=True, text=True)
 
-        logging.info(f"Return Code: {result.returncode}")
-        logging.info(f"STDOUT:\n{result.stdout}")
-        
+        logging.info(f"📍 Step 4: Script completed with return code: {result.returncode}")
+
+        if result.stdout:
+            logging.info(f"📤 STDOUT:\n{result.stdout.strip()}")
         if result.stderr:
-            logging.error(f"STDERR:\n{result.stderr}")
+            logging.error(f"📥 STDERR:\n{result.stderr.strip()}")
 
+        print(result.returncode)
         if result.returncode != 0:
-            logging.error("Script execution failed.")
+            logging.error("❌ Script execution failed.")
         else:
-            logging.info("Script executed successfully.")
+            logging.info("✅ Script executed successfully.")
+
     except Exception as e:
-        logging.error(f"Failed to execute script {file_path}: {e}")
+        logging.exception(f"❗ Unexpected error occurred while executing script: {e}")
 
-    logging.info(f"[{datetime.now()}] Finished running script at: {file_path}")
-
+    logging.info("🔚 Finished script execution.\n")

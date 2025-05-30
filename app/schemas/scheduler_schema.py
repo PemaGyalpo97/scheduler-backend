@@ -1,5 +1,15 @@
+"""Scheduler schema."""
+from enum import Enum
 from pydantic import BaseModel
-from typing import Optional
+
+
+class FrequencyEnum(str, Enum):
+    """Enum class for frequency."""
+    once = "once"
+    minute = "minute"
+    hour = "hour"
+    day = "day"
+    month = "month"
 
 class SchedulerCreate(BaseModel):
     name: str
@@ -10,4 +20,6 @@ class SchedulerCreate(BaseModel):
     file_location: str
     date: str
     time: str
+    frequency: FrequencyEnum
+    frequency_value: int
     created_by: str

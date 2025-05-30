@@ -1,101 +1,113 @@
-import os
-from sqlalchemy import text
-from app.database.session import DATABASE_URL
+"""Scheduler Service"""
+from sqlalchemy import text, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.scheduler_model import Scheduler
 from app.models.audit_log_model import AuditLog
 from app.schemas.scheduler_schema import SchedulerCreate
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.services.cron_service import schedule_script_execution
 from app.job_runner.run_sql_function import  execute_sql_function
+from app.job_runner.run_script import run_script  # type: ignore
 from app.core.scheduler_config import scheduler
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from pprint import pprint
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.cron import CronTrigger
 from pathlib import Path
+from datetime import datetime
 
 class SchedulerService:
+    """Scheduler Service"""
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def create_scheduler(self, scheduler_data: SchedulerCreate):
+        """Create a scheduler in the database."""
+
+        data = scheduler_data.dict()
+
         # Step 1: Save to DB
-        scheduler_obj = Scheduler(**scheduler_data.dict())
+        scheduler_obj = Scheduler(**data)
         self.db.add(scheduler_obj)
         await self.db.commit()
         await self.db.refresh(scheduler_obj)
-        
-        # Step 2: Create file
-        file_path = str(Path(scheduler_obj.file_location) / f"{scheduler_obj.file_name}.{scheduler_obj.content_type}")
-        os.makedirs(scheduler_obj.file_location, exist_ok=True)
-        with open(file_path, "w") as f:
-            f.write(scheduler_obj.content)
-        print("File Path : ", file_path)
-        print("scheduler status", scheduler_obj.is_active)
 
-        if scheduler_data.content_type == "py":
-            arguments = []
 
-            if arguments:
-                # Step 3: Schedule if active
-                if scheduler_obj.is_active:
-                    from datetime import datetime
-                    job_time = datetime.strptime(f"{scheduler_obj.date} {scheduler_obj.time}", "%Y-%m-%d %H:%M")
+        # Step 2: Create file (cross-platform-safe)
+        script_dir = Path(scheduler_obj.file_location)  # type: ignore
+        script_dir.mkdir(parents=True, exist_ok=True)
+        file_path = script_dir / f"{scheduler_obj.file_name}.{scheduler_obj.content_type}"
 
-                    scheduler.add_job(
+        with open(file_path, "w") as f: 
+            f.write(scheduler_obj.content)  # type: ignore
+
+        print(f"File Path: {file_path}")
+        print(f"Scheduler Active: {scheduler_obj.is_active}")
+
+        # Step 3: Determine trigger
+        job_time = datetime.strptime(f"{scheduler_obj.date} {scheduler_obj.time}", "%Y-%m-%d %H:%M")
+
+        def get_trigger(frequency: str, start_time: datetime, freq_val: int):
+            if frequency == "once":
+                return DateTrigger(run_date=start_time)
+
+            elif frequency == "minute":
+                # Every freq_val minutes
+                return CronTrigger(minute=f"*/{freq_val}")
+
+            elif frequency == "hour":
+                # Every freq_val hours at the specified minute
+                return CronTrigger(hour=f"*/{freq_val}", minute=start_time.minute)
+
+            elif frequency == "day":
+                # Every freq_val days at the specified hour and minute
+                return CronTrigger(day=f"*/{freq_val}", hour=start_time.hour, minute=start_time.minute)
+
+            elif frequency == "month":
+                # Every freq_val months on the specified day, hour, and minute
+                return CronTrigger(month=f"*/{freq_val}", day=start_time.day, hour=start_time.hour, minute=start_time.minute)
+
+            else:
+                raise ValueError(f"Unsupported frequency: {frequency}")
+            
+        trigger = get_trigger(scheduler_data.frequency, job_time, scheduler_data.frequency_value)
+
+        # Step 4: Schedule the job
+        if scheduler_obj.is_active:  # type: ignore
+            job_id = f"scheduler_{scheduler_obj.id}"
+            
+            if scheduler_data.content_type == "py":
+                arguments = "gyalpococ@gmail.com"
+                
+                if arguments:
+                        
+                    scheduler.add_job( # type: ignore
                         run_script,
-                        "date",
-                        run_date=job_time,
-                        args=[file_path] + arguments,  # make sure it's a list arguments
-                        id=f"scheduler_{scheduler_obj.id}",
+                        trigger=trigger,
+                        args=[str(file_path), arguments],
+                        id=job_id,
                         replace_existing=True
                     )
+                    print("Scheduled Python script.")
+                else:
+                    print("No arguments provided.")
+                    return None
+            elif scheduler_data.content_type == "sql":
+                try:
+                    await self.db.execute(text(scheduler_obj.content))  # type: ignore # Create SQL function
+                    await self.db.commit()
+                    print("SQL function created in database.")
+                except Exception as e:
+                    print("Error creating SQL function:", e)
+                    await self.db.rollback()
+                    raise e
 
-                    print(scheduler.get_job(f"scheduler_{scheduler_obj.id}"))
+                scheduler.add_job(  # type: ignore
+                    func=execute_sql_function,
+                    trigger=trigger,
+                    args=[scheduler_obj.file_name],  # function name = file_name
+                    id=job_id,
+                    replace_existing=True
+                )
+                print("Scheduled SQL function.")
 
-                    print("Scheduled job for:", job_time)
-                    
-                    pprint([{
-                        "id": job.id,
-                        "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
-                        "trigger": str(job.trigger),
-                        "args": job.args,
-                        "kwargs": job.kwargs,
-                        "name": job.name,
-                    } for job in scheduler.get_jobs()])
-            else:
-                print("No arguments provided")
-                return None
-        elif scheduler_data.content_type == "sql":
-            # Create the function in the database
-            try:
-                await self.db.execute(text(scheduler_obj.content))  # <-- Create function in DB
-                await self.db.commit()
-                print("SQL function created in database.")
-            except Exception as e:
-                print("Error creating SQL function:", e)
-                await self.db.rollback()
-                raise e
-
-            from datetime import datetime
-            job_time = datetime.strptime(f"{scheduler_obj.date} {scheduler_obj.time}", "%Y-%m-%d %H:%M")
-
-            function_name = scheduler_obj.file_name
-
-            async def call_sql_function(fn_name: str):
-                async with self.db.begin():
-                    await self.db.execute(text(f"SELECT {fn_name}()"))
-
-            scheduler.add_job(
-                func=execute_sql_function,
-                trigger='date',
-                run_date=job_time,
-                args=[function_name],
-                id=str(scheduler_obj.id),
-                replace_existing=True
-            )
-            print("Scheduled SQL function.")
-
-        # Step 4: Log audit
+        # Step 5: Log audit
         audit = AuditLog(
             scheduler_id=scheduler_obj.id,
             executed_at=scheduler_obj.created_at,
@@ -110,13 +122,14 @@ class SchedulerService:
         return scheduler_obj
     
     async def update_scheduler(self, scheduler_data: SchedulerCreate):
-        scheduler = await self.db.get(Scheduler, scheduler_data.id)
+        """Update a scheduler in the database."""
+        scheduler = await self.db.get(Scheduler, scheduler_data.id)  # type: ignore
         if not scheduler:
             return None
 
-        scheduler.file_name = scheduler_data.file_name
-        scheduler.file_location = scheduler_data.file_location
-        scheduler.cron_expression = scheduler_data.cron_expression
+        scheduler.file_name = scheduler_data.file_name  # type: ignore
+        scheduler.file_location = scheduler_data.file_location  # type: ignore
+        scheduler.cron_expression = scheduler_data.cron_expression  # type: ignore
 
         await self.db.commit()
         await self.db.refresh(scheduler)

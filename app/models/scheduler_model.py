@@ -3,7 +3,10 @@ from app.models.user_model import Base
 import datetime
 
 class Scheduler(Base):
+    """Scheduler Model"""
+
     __tablename__ = "scheduler"
+    
     id = Column(Integer, primary_key=True)
     name = Column(String)
     description = Column(Text)
@@ -13,6 +16,8 @@ class Scheduler(Base):
     file_location = Column(String)
     date = Column(String)
     time = Column(String)
+    frequency = Column(String)
+    frequency_value = Column(Integer)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     created_by = Column(String)

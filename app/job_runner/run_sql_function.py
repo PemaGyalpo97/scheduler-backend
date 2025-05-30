@@ -6,6 +6,7 @@ from app.database.session import SQLALCHEMY_SYNC_DATABASE_URL
 engine = create_engine(SQLALCHEMY_SYNC_DATABASE_URL)
 
 def execute_sql_function(function_name: str):
+    """Execute a SQL function."""
     with engine.connect() as conn:
         conn.execute(text(f"SELECT {function_name}();"))
         conn.commit()
